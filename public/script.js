@@ -33,11 +33,10 @@ socket.onopen = () => {
 
 socket.onmessage = async (event) => {
     try {
-        // Убираем все, что идет до первого символа '{', чтобы оставить только валидный JSON
         let messageData = event.data;
+
+        // Убираем префикс перед JSON (если он есть)
         const jsonStartIndex = messageData.indexOf("{");
-        
-        // Если нашли начало JSON (индекс не -1), извлекаем его
         if (jsonStartIndex !== -1) {
             messageData = messageData.substring(jsonStartIndex);
         }
@@ -45,23 +44,31 @@ socket.onmessage = async (event) => {
         // Логируем очищенное сообщение от WebSocket
         console.log("Получено сообщение от WebSocket:", messageData);
 
-        // Теперь парсим очищенное сообщение как JSON
-        const signal = JSON.parse(messageData);
+        // Пробуем парсить как JSON
+        let signal;
+        try {
+            signal = JSON.parse(messageData);
+        } catch (error) {
+            // Если ошибка парсинга JSON, то это текстовое сообщение
+            addMessage(messageData, false); // Просто выводим в чат
+            console.error("Ошибка при парсинге JSON:", error);
+            return; // Выход из функции, если это не видео-сигнал
+        }
 
+        // Обработка сообщений только по видео-сигналам
         if (signal.IceCandidate) {
             try {
                 const iceCandidate = JSON.parse(signal.IceCandidate);
                 console.log("Парсинг IceCandidate успешен:", iceCandidate);
-                
+
                 const candidate = new RTCIceCandidate(iceCandidate);
                 await peerConnection.addIceCandidate(candidate);
                 console.log("IceCandidate добавлен в peerConnection");
             } catch (err) {
-                console.error("Ошибка при парсинге внутреннего JSON для IceCandidate:", err);
+                console.error("Ошибка при парсинге IceCandidate:", err);
             }
         }
 
-        // Обработка других типов сигналов
         if (signal.Offer) {
             console.log("Получен Offer, создаём peerConnection...");
             await createPeer();
@@ -75,6 +82,7 @@ socket.onmessage = async (event) => {
             console.log("Получен Answer, устанавливаем remoteDescription...");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(signal.Answer)));
         }
+
     } catch (error) {
         console.error("Ошибка при обработке сообщения WebSocket:", error);
     }
@@ -117,7 +125,8 @@ async function createPeer() {
     // Обработка потока с удаленной стороны
     peerConnection.ontrack = (event) => {
         console.log("Получен поток для remoteVideo:", event.streams);
-        remoteVideo.srcObject = event.streams[0];
+        // Если поток с удаленной стороны, показываем его в remoteVideo
+        remoteVideo.srcObject = event.streams[0]; 
         remoteVideo.play().catch(err => {
             console.error("Не удалось воспроизвести remoteVideo:", err);
         });
@@ -128,7 +137,7 @@ async function createPeer() {
         console.log("Запрашиваем доступ к камере и микрофону...");
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            localVideo.srcObject = localStream;
+            localVideo.srcObject = localStream; // Отображаем локальное видео на текущей вкладке
             localVideo.play().catch(err => {
                 console.error("Не удалось воспроизвести localVideo:", err);
             });
@@ -154,4 +163,8 @@ callButton.addEventListener("click", async () => {
     console.log("Offer создан, устанавливаем localDescription...");
     await peerConnection.setLocalDescription(offer);
     socket.send(JSON.stringify({ Offer: JSON.stringify(offer) }));
+
+    // На первой вкладке показываем только локальное видео
+    remoteVideo.srcObject = null; // Убираем отображение удаленного видео на первой вкладке
 });
+
