@@ -33,33 +33,53 @@ socket.onopen = () => {
 
 socket.onmessage = async (event) => {
     try {
-        const signal = JSON.parse(event.data);
-        console.log("Получено сообщение от WebSocket:", signal);  // Отладочное сообщение
+        // Убираем все, что идет до первого символа '{', чтобы оставить только валидный JSON
+        let messageData = event.data;
+        const jsonStartIndex = messageData.indexOf("{");
+        
+        // Если нашли начало JSON (индекс не -1), извлекаем его
+        if (jsonStartIndex !== -1) {
+            messageData = messageData.substring(jsonStartIndex);
+        }
 
+        // Логируем очищенное сообщение от WebSocket
+        console.log("Получено сообщение от WebSocket:", messageData);
+
+        // Теперь парсим очищенное сообщение как JSON
+        const signal = JSON.parse(messageData);
+
+        if (signal.IceCandidate) {
+            try {
+                const iceCandidate = JSON.parse(signal.IceCandidate);
+                console.log("Парсинг IceCandidate успешен:", iceCandidate);
+                
+                const candidate = new RTCIceCandidate(iceCandidate);
+                await peerConnection.addIceCandidate(candidate);
+                console.log("IceCandidate добавлен в peerConnection");
+            } catch (err) {
+                console.error("Ошибка при парсинге внутреннего JSON для IceCandidate:", err);
+            }
+        }
+
+        // Обработка других типов сигналов
         if (signal.Offer) {
-            console.log("Получен Offer, создаём peerConnection...");  // Отладочное сообщение
+            console.log("Получен Offer, создаём peerConnection...");
             await createPeer();
-            console.log("Устанавливаем remoteDescription для Offer...");  // Отладочное сообщение
+            console.log("Устанавливаем remoteDescription для Offer...");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(signal.Offer)));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            console.log("Отправляем Answer...");  // Отладочное сообщение
+            console.log("Отправляем Answer...");
             socket.send(JSON.stringify({ Answer: JSON.stringify(answer) }));
-
         } else if (signal.Answer) {
-            console.log("Получен Answer, устанавливаем remoteDescription...");  // Отладочное сообщение
+            console.log("Получен Answer, устанавливаем remoteDescription...");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(signal.Answer)));
-
-        } else if (signal.IceCandidate) {
-            console.log("Получен IceCandidate, добавляем его в peerConnection...");  // Отладочное сообщение
-            const candidate = new RTCIceCandidate(JSON.parse(signal.IceCandidate));
-            await peerConnection.addIceCandidate(candidate);
         }
     } catch (error) {
-        console.error("Ошибка обработки сообщения WebSocket:", error);
-        addMessage(event.data);
+        console.error("Ошибка при обработке сообщения WebSocket:", error);
     }
 };
+
 
 socket.onclose = () => console.log("WebSocket закрыт");
 socket.onerror = (error) => console.error("WebSocket ошибка:", error);
@@ -68,7 +88,7 @@ socket.onerror = (error) => console.error("WebSocket ошибка:", error);
 sendButton.addEventListener("click", () => {
     const message = messageInput.value;
     if (message.trim() !== "") {
-        console.log("Отправляем сообщение через WebSocket:", message);  // Отладочное сообщение
+        console.log("Отправляем сообщение через WebSocket:", message);
         socket.send(message);
         addMessage(message, true);
         messageInput.value = "";
@@ -83,41 +103,55 @@ messageInput.addEventListener("keydown", (event) => {
 async function createPeer() {
     if (peerConnection) return;
 
-    console.log("Создаём новый RTCPeerConnection...");  // Отладочное сообщение
+    console.log("Создаём новый RTCPeerConnection...");
     peerConnection = new RTCPeerConnection(config);
 
+    // Обработка кандидатов ICE
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-            console.log("ICE Candidate найден, отправляем через WebSocket...");  // Отладочное сообщение
+            console.log("ICE Candidate найден, отправляем через WebSocket...");
             socket.send(JSON.stringify({ IceCandidate: JSON.stringify(event.candidate) }));
         }
     };
 
+    // Обработка потока с удаленной стороны
     peerConnection.ontrack = (event) => {
-        console.log("Получен поток для remoteVideo:", event.streams);  // Отладочное сообщение
+        console.log("Получен поток для remoteVideo:", event.streams);
         remoteVideo.srcObject = event.streams[0];
+        remoteVideo.play().catch(err => {
+            console.error("Не удалось воспроизвести remoteVideo:", err);
+        });
     };
 
+    // Получение и настройка локального потока
     if (!localStream) {
-        console.log("Запрашиваем доступ к камере и микрофону...");  // Отладочное сообщение
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
+        console.log("Запрашиваем доступ к камере и микрофону...");
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
+            localVideo.play().catch(err => {
+                console.error("Не удалось воспроизвести localVideo:", err);
+            });
+        } catch (err) {
+            console.error("Ошибка получения медиа потока:", err);
+            alert("Не удалось получить доступ к камере и микрофону.");
+        }
     } else {
-        console.log("Локальный поток уже существует, пропускаем запрос...");  // Отладочное сообщение
+        console.log("Локальный поток уже существует, пропускаем запрос...");
     }
 
     localStream.getTracks().forEach(track => {
-        console.log("Добавляем трек в peerConnection:", track);  // Отладочное сообщение
+        console.log("Добавляем трек в peerConnection:", track);
         peerConnection.addTrack(track, localStream);
     });
 }
 
 // === Вызов ===
 callButton.addEventListener("click", async () => {
-    console.log("Нажата кнопка вызова, создаём offer...");  // Отладочное сообщение
+    console.log("Нажата кнопка вызова, создаём offer...");
     await createPeer();
     const offer = await peerConnection.createOffer();
-    console.log("Offer создан, устанавливаем localDescription...");  // Отладочное сообщение
+    console.log("Offer создан, устанавливаем localDescription...");
     await peerConnection.setLocalDescription(offer);
     socket.send(JSON.stringify({ Offer: JSON.stringify(offer) }));
 });
