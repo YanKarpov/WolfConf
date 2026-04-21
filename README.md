@@ -17,5 +17,3 @@
 - **WebRTC** – технология передачи аудио/видео между клиентами напрямую
 - **JavaScript** – обработка WebRTC и WebSocket на клиентской стороне
 - **HTML/CSS** – базовая разметка и стилизация пользовательского интерфейса в `public/`
-
-Co-Authored-By: YanKarpov2004 <yankarpov04@gmail.com>
